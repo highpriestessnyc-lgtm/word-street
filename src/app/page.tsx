@@ -713,15 +713,15 @@ function ReadingMode({ curLv, onCorrect }: { curLv: number; onCorrect: () => voi
 type Msg = { role: 'user' | 'assistant'; content: string }
 
 const INTERVIEW_LEVELS: Record<number, { label: string; prompt: string }> = {
-  1: { label: '5級レベル', prompt: 'You are a friendly English teacher interviewing a young student (grade 1-3 level). Ask very simple questions about daily life, animals, food, colors. Use simple vocabulary. Speak slowly. After each answer, give brief positive feedback and correct any major errors gently. Keep responses under 3 sentences. Start by introducing yourself and asking the student their name.' },
-  4: { label: '4級レベル', prompt: 'You are an English teacher interviewing an elementary school student (grade 4-6). Ask questions about hobbies, school life, and daily routine. Use simple but complete sentences. After each answer, give feedback on grammar and vocabulary. Keep responses concise. Start with a greeting and ask about their hobbies.' },
-  7: { label: '3級レベル', prompt: 'You are an English examiner conducting a Eiken Grade 3 style interview. Ask questions about the student\'s experiences, opinions on simple topics, and future plans. Correct grammar errors politely. After each answer, ask a follow-up question. Start with "Hello, let\'s begin the interview."' },
-  10: { label: '準2級レベル', prompt: 'You are an Eiken Pre-2 examiner. Conduct a formal interview asking about social topics, personal experiences, and opinions. Topics include school, environment, technology, and society. Provide grammar feedback and vocabulary suggestions. Use more complex sentence structures. Start formally.' },
-  13: { label: '2級レベル', prompt: 'You are an Eiken Grade 2 examiner. Conduct an advanced interview on topics like environmental issues, social problems, global trends, and science. Expect complete sentences and complex grammar. Provide detailed feedback on fluency, vocabulary, and grammar. Challenge the student with follow-up questions.' },
-  17: { label: '準1級レベル', prompt: 'You are an Eiken Pre-1 examiner. Conduct a sophisticated interview on abstract topics: philosophy, ethics, economics, culture, and international relations. Expect nuanced arguments, advanced vocabulary, and complex grammar. Give detailed professional feedback. Debate and challenge their arguments respectfully.' },
+  1:  { label: '5級', prompt: 'You are a friendly English teacher for young kids. Ask very simple questions about animals, food, colors, family. One short question at a time. Max 2 sentences per response. After their answer give ONE word of praise then ask the next question. Never show text instructions — just speak naturally.' },
+  4:  { label: '4級', prompt: 'You are a friendly English teacher for elementary students. Ask about hobbies, school, daily routine. Keep responses to 2-3 sentences. Give brief grammar feedback then ask the next question.' },
+  7:  { label: '3級', prompt: 'You are an Eiken Grade 3 examiner. Ask about experiences, opinions, future plans. Give polite grammar corrections. Ask one follow-up per answer. 3 sentences max per turn.' },
+  10: { label: '準2級', prompt: 'You are an Eiken Pre-2 examiner. Topics: environment, technology, society. Give grammar and vocabulary feedback. Use formal interview style. 3-4 sentences per turn.' },
+  13: { label: '2級', prompt: 'You are an Eiken Grade 2 examiner. Advanced topics: global issues, science, social problems. Expect complex grammar. Give detailed feedback on fluency and accuracy. Challenge with follow-ups.' },
+  17: { label: '準1級', prompt: 'You are an Eiken Pre-1 examiner. Sophisticated topics: philosophy, ethics, international relations. Expect nuanced arguments and advanced vocabulary. Debate their points professionally.' },
 }
 
-function getInterviewPrompt(lvId: number): { label: string; prompt: string } {
+function getInterviewPrompt(lvId: number) {
   const keys = Object.keys(INTERVIEW_LEVELS).map(Number).sort((a,b) => a-b)
   const key = keys.filter(k => k <= lvId).pop() || keys[0]
   return INTERVIEW_LEVELS[key]
@@ -729,148 +729,234 @@ function getInterviewPrompt(lvId: number): { label: string; prompt: string } {
 
 function AIInterviewMode({ curLv }: { curLv: number }) {
   const [msgs, setMsgs] = useState<Msg[]>([])
-  const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [started, setStarted] = useState(false)
   const [speaking, setSpeaking] = useState(false)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const [listening, setListening] = useState(false)
+  const [showSubtitle, setShowSubtitle] = useState(false)
+  const [lastAiText, setLastAiText] = useState('')
+  const [lastUserText, setLastUserText] = useState('')
+  const [inputMode, setInputMode] = useState<'voice'|'text'>('voice')
+  const [textInput, setTextInput] = useState('')
+  const recogRef = useRef<any>(null)
   const lvInfo = getInterviewPrompt(curLv)
-
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs])
+  const lv = LEVELS.find(l => l.id === curLv)
 
   async function callClaude(history: Msg[]) {
-  const res = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages: history,
-      system: lvInfo.prompt,
-    }),
-  })
-  const data = await res.json()
-  return data.content?.[0]?.text || 'Sorry, please try again.'
-}
-  
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history, system: lvInfo.prompt }),
+    })
+    const data = await res.json()
+    return data.content?.[0]?.text || 'Sorry, please try again.'
+  }
+
+  async function aiReply(history: Msg[]) {
+    setLoading(true)
+    const reply = await callClaude(history)
+    setLastAiText(reply)
+    setMsgs([...history, { role: 'assistant', content: reply }])
+    setLoading(false)
+    setSpeaking(true)
+    speakEn(reply, 0.88, () => setSpeaking(false))
+  }
 
   async function start() {
     setStarted(true)
-    setLoading(true)
-    const reply = await callClaude([{ role: 'user', content: 'Please start the interview.' }])
-    const newMsgs: Msg[] = [
-      { role: 'user', content: 'Please start the interview.' },
-      { role: 'assistant', content: reply },
-    ]
-    setMsgs(newMsgs)
-    setLoading(false)
-    setSpeaking(true)
-    speakEn(reply, 0.85, () => setSpeaking(false))
+    const init: Msg[] = [{ role: 'user', content: 'Please start the interview now.' }]
+    await aiReply(init)
   }
 
-  async function send() {
-    if (!input.trim() || loading) return
-    const userMsg: Msg = { role: 'user', content: input.trim() }
-    const newHistory = [...msgs, userMsg]
+  async function submitAnswer(text: string) {
+    if (!text.trim() || loading || speaking) return
+    setLastUserText(text)
+    const newHistory: Msg[] = [...msgs, { role: 'user', content: text }]
     setMsgs(newHistory)
-    setInput('')
-    setLoading(true)
-    const reply = await callClaude(newHistory)
-    const withReply = [...newHistory, { role: 'assistant' as const, content: reply }]
-    setMsgs(withReply)
-    setLoading(false)
-    setSpeaking(true)
-    speakEn(reply, 0.85, () => setSpeaking(false))
+    setTextInput('')
+    await aiReply(newHistory)
   }
 
-  function speakMsg(text: string) {
-    setSpeaking(true)
-    speakEn(text, 0.85, () => setSpeaking(false))
+  function startListening() {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) { alert('このブラウザは音声認識に非対応です。Chromeを使ってください。'); return }
+    window.speechSynthesis.cancel()
+    const rec = new SR()
+    rec.lang = 'en-US'
+    rec.interimResults = false
+    rec.maxAlternatives = 1
+    recogRef.current = rec
+    setListening(true)
+    rec.onresult = (e: any) => {
+      const said = e.results[0][0].transcript
+      setListening(false)
+      submitAnswer(said)
+    }
+    rec.onerror = () => setListening(false)
+    rec.onend = () => setListening(false)
+    rec.start()
+  }
+
+  function stopListening() {
+    recogRef.current?.stop()
+    setListening(false)
   }
 
   function reset() {
-    setMsgs([]); setStarted(false); setInput(''); setLoading(false)
+    setMsgs([]); setStarted(false); setLastAiText(''); setLastUserText('')
+    setLoading(false); setSpeaking(false); setListening(false)
     window.speechSynthesis.cancel()
   }
 
+  // ── スタート前画面 ──
   if (!started) {
     return (
       <div className="bg-gray-50 rounded-xl p-5 border border-gray-200 text-center">
-        <div className="text-3xl mb-3">🎤</div>
-        <div className="text-base font-semibold text-gray-800 mb-1">AI英検面接</div>
-        <div className="inline-block mb-3">
-          <EikenBadge cls={LEVELS.find(l=>l.id===curLv)?.eikenClass||'bg-gray-100 text-gray-600'} label={lvInfo.label} />
+        <div className="text-4xl mb-3">🎤</div>
+        <div className="text-base font-semibold text-gray-800 mb-2">AI英検面接</div>
+        {lv && <div className="mb-3"><EikenBadge cls={lv.eikenClass} label={lvInfo.label} /></div>}
+        <div className="text-sm text-gray-500 mb-5 leading-relaxed">
+          AIが面接官として英語で会話。<br/>
+          声で答えるか、テキストで入力するか選べるよ。<br/>
+          字幕のON/OFFも切り替えできる。
         </div>
-        <div className="text-sm text-gray-500 mb-4 leading-relaxed">
-          AIが面接官になって英語で会話練習。<br/>
-          文法・語彙・表現のフィードバックも自動でもらえる。<br/>
-          面接官の音声も自動で読み上げるよ。
-        </div>
-        <div className="bg-white border border-gray-200 rounded-lg p-3 mb-4 text-xs text-gray-500 text-left space-y-1">
-          <div>📌 レベル: {lvInfo.label}</div>
-          <div>🔊 面接官の音声は自動再生</div>
-          <div>📝 英語でタイピングして返答</div>
-          <div>💡 文法ミスは優しく訂正してもらえる</div>
+        <div className="flex gap-3 justify-center mb-5">
+          <button onClick={() => setInputMode('voice')}
+            className={`flex-1 max-w-32 py-2.5 rounded-xl border text-sm font-medium transition-all
+              ${inputMode==='voice' ? 'bg-ws-orange text-white border-ws-orange' : 'bg-white border-gray-200 text-gray-600'}`}>
+            🎤 声で答える
+          </button>
+          <button onClick={() => setInputMode('text')}
+            className={`flex-1 max-w-32 py-2.5 rounded-xl border text-sm font-medium transition-all
+              ${inputMode==='text' ? 'bg-ws-orange text-white border-ws-orange' : 'bg-white border-gray-200 text-gray-600'}`}>
+            ⌨️ 入力する
+          </button>
         </div>
         <button onClick={start}
-          className="px-8 py-3 bg-ws-orange text-white rounded-xl text-sm font-semibold">
-          面接スタート 🎤
+          className="w-full py-3 bg-ws-orange text-white rounded-xl text-sm font-semibold">
+          面接スタート →
         </button>
       </div>
     )
   }
 
+  // ── 面接画面 ──
   return (
-    <div className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-gray-200">
+    <div className="rounded-xl border border-gray-200 overflow-hidden bg-gray-900">
+
+      {/* ヘッダー */}
+      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-800">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-700">🎤 AI英検面接</span>
-          <EikenBadge cls={LEVELS.find(l=>l.id===curLv)?.eikenClass||'bg-gray-100 text-gray-600'} label={lvInfo.label} />
+          <span className="text-xs text-gray-300 font-medium">🎤 AI英検面接</span>
+          {lv && <EikenBadge cls="bg-gray-700 text-gray-300" label={lvInfo.label} />}
         </div>
-        <div className="flex items-center gap-2">
-          {speaking && <span className="text-xs text-ws-orange flex items-center gap-0.5">読み上げ中 <SpeakWave show={true} /></span>}
-          <button onClick={reset} className="text-xs text-gray-400 hover:text-gray-600">リセット</button>
+        <div className="flex items-center gap-3">
+          {/* 字幕トグル */}
+          <button onClick={() => setShowSubtitle(s => !s)}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-all
+              ${showSubtitle ? 'bg-ws-orange text-white border-ws-orange' : 'bg-gray-700 text-gray-400 border-gray-600'}`}>
+            字幕 {showSubtitle ? 'ON' : 'OFF'}
+          </button>
+          <button onClick={reset} className="text-xs text-gray-500 hover:text-gray-300">終了</button>
         </div>
       </div>
 
-      <div className="h-72 overflow-y-auto p-3 flex flex-col gap-2">
-        {msgs.filter(m => m.content !== 'Please start the interview.').map((m, i) => (
-          <div key={i} className={`flex gap-2 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
-            <span className="text-lg shrink-0">{m.role === 'assistant' ? '👔' : '🙋'}</span>
-            <div className={`max-w-[80%] rounded-xl px-3 py-2 text-sm leading-relaxed
-              ${m.role === 'assistant' ? 'bg-white border border-gray-200 text-gray-800' : 'bg-ws-orange-light text-ws-orange-dark'}`}>
-              {m.content}
-              {m.role === 'assistant' && (
-                <button onClick={() => speakMsg(m.content)}
-                  className="block mt-1 text-xs text-gray-400 hover:text-ws-orange">🔊 再生</button>
-              )}
+      {/* メイン表示エリア */}
+      <div className="relative bg-gray-900 flex flex-col items-center justify-center min-h-52 px-6 py-6">
+
+        {/* 面接官アバター */}
+        <div className={`text-6xl mb-4 transition-all ${speaking ? 'animate-pulse' : ''}`}>👔</div>
+
+        {/* ステータス表示 */}
+        <div className="text-center mb-4">
+          {loading && (
+            <div className="text-gray-400 text-sm flex items-center gap-1 justify-center">
+              考え中
+              <span className="animate-bounce">.</span>
+              <span className="animate-bounce" style={{animationDelay:'0.15s'}}>.</span>
+              <span className="animate-bounce" style={{animationDelay:'0.3s'}}>.</span>
             </div>
-          </div>
-        ))}
-        {loading && (
-          <div className="flex gap-2">
-            <span className="text-lg">👔</span>
-            <div className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-400 flex items-center gap-1">
-              考え中<span className="animate-bounce">.</span><span className="animate-bounce" style={{animationDelay:'0.1s'}}>.</span><span className="animate-bounce" style={{animationDelay:'0.2s'}}>.</span>
+          )}
+          {speaking && !loading && (
+            <div className="text-ws-orange text-sm flex items-center gap-2 justify-center">
+              <SpeakWave show={true} /> 面接官が話しています
             </div>
+          )}
+          {!loading && !speaking && !listening && started && (
+            <div className="text-gray-500 text-xs">あなたの番です</div>
+          )}
+          {listening && (
+            <div className="text-green-400 text-sm flex items-center gap-2 justify-center">
+              <span className="w-2 h-2 rounded-full bg-green-400 animate-ping inline-block" />
+              聞いています...
+            </div>
+          )}
+        </div>
+
+        {/* 字幕エリア */}
+        {showSubtitle && (
+          <div className="w-full max-w-sm">
+            {lastAiText && (
+              <div className="bg-black bg-opacity-60 rounded-xl px-4 py-2.5 mb-2 text-center">
+                <div className="text-[10px] text-gray-500 mb-1">面接官</div>
+                <div className="text-white text-sm leading-relaxed">{lastAiText}</div>
+              </div>
+            )}
+            {lastUserText && (
+              <div className="bg-ws-orange bg-opacity-20 rounded-xl px-4 py-2 text-center">
+                <div className="text-[10px] text-ws-orange mb-1">あなた</div>
+                <div className="text-ws-orange-light text-sm leading-relaxed">{lastUserText}</div>
+              </div>
+            )}
           </div>
         )}
-        <div ref={bottomRef} />
+
+        {/* 字幕OFF時のシンプル表示 */}
+        {!showSubtitle && lastUserText && (
+          <div className="text-gray-600 text-xs text-center mt-2">"{lastUserText}"</div>
+        )}
       </div>
 
-      <div className="p-3 border-t border-gray-200 bg-white">
-        <div className="flex gap-2">
-          <input
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
-            placeholder="英語で入力してEnter..."
-            className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-ws-orange"
-          />
-          <button onClick={send} disabled={loading || !input.trim()}
-            className="px-4 py-2 bg-ws-orange text-white rounded-lg text-sm disabled:opacity-40">
-            送信
-          </button>
-        </div>
-        <div className="text-[10px] text-gray-300 mt-1">Enterで送信 · 面接官の音声は自動再生</div>
+      {/* 入力エリア */}
+      <div className="bg-gray-800 px-4 py-4">
+        {inputMode === 'voice' ? (
+          <div className="flex flex-col items-center gap-3">
+            <button
+              onClick={listening ? stopListening : startListening}
+              disabled={loading || speaking}
+              className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all
+                ${listening ? 'bg-red-500 scale-110 shadow-lg shadow-red-500/40' :
+                  loading || speaking ? 'bg-gray-600 cursor-not-allowed' :
+                  'bg-ws-orange hover:bg-ws-orange-dark shadow-lg shadow-orange-500/30'}`}>
+              {listening ? '⏹' : '🎤'}
+            </button>
+            <div className="text-xs text-gray-500">
+              {listening ? 'タップで停止' : loading || speaking ? '待ってください' : 'タップして話す'}
+            </div>
+            <button onClick={() => setInputMode('text')}
+              className="text-xs text-gray-600 underline">テキスト入力に切り替え</button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              <input
+                value={textInput}
+                onChange={e => setTextInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && !e.shiftKey && submitAnswer(textInput)}
+                placeholder="英語で入力..."
+                disabled={loading || speaking}
+                className="flex-1 px-3 py-2 text-sm bg-gray-700 text-white border border-gray-600 rounded-lg focus:outline-none focus:border-ws-orange placeholder-gray-500"
+              />
+              <button onClick={() => submitAnswer(textInput)}
+                disabled={loading || speaking || !textInput.trim()}
+                className="px-4 py-2 bg-ws-orange text-white rounded-lg text-sm disabled:opacity-40">
+                送信
+              </button>
+            </div>
+            <button onClick={() => setInputMode('voice')}
+              className="text-xs text-gray-600 underline text-center">音声入力に切り替え</button>
+          </div>
+        )}
       </div>
     </div>
   )
