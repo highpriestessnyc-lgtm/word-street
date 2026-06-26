@@ -739,19 +739,18 @@ function AIInterviewMode({ curLv }: { curLv: number }) {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs])
 
   async function callClaude(history: Msg[]) {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1000,
-        system: lvInfo.prompt,
-        messages: history,
-      }),
-    })
-    const data = await res.json()
-    return data.content?.[0]?.text || 'Sorry, please try again.'
-  }
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: history,
+      system: lvInfo.prompt,
+    }),
+  })
+  const data = await res.json()
+  return data.content?.[0]?.text || 'Sorry, please try again.'
+}
+  
 
   async function start() {
     setStarted(true)
